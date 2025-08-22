@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AppSetting;
 use App\Models\Record;
 use Illuminate\Http\Request;
 
@@ -11,7 +12,8 @@ class RecordController extends Controller
     public function index()
     {
         $records = Record::all();
-        $sheetUrl = config('app.sheet_url', '');
+        $sheetUrl = AppSetting::where('key', 'sheet_url')->value('value');
+
         return view('records.index', compact('records', 'sheetUrl'));
     }
 
@@ -55,10 +57,14 @@ class RecordController extends Controller
             'sheet_url' => 'required|url'
         ]);
 
-        file_put_contents(storage_path('app/config/sheet_url.txt'), $request->sheet_url);
+        AppSetting::updateOrCreate(
+            ['key' => 'sheet_url'],
+            ['value' => $request->sheet_url]
+        );
 
         return redirect()->back()->with('success', 'Sheet URL updated successfully');
     }
+
 
 }
 
