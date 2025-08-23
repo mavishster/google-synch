@@ -4,8 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\AppSetting;
 use App\Models\Record;
-use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Http\Request;
+use Faker\Factory;
+use Illuminate\Support\Facades\DB;
 
 class RecordController extends Controller
 {
@@ -41,8 +42,8 @@ class RecordController extends Controller
 
     public function generate()
     {
-        $count = 1000;
-        $batchSize = 100;
+        $count = 1000; // total rows
+        $batchSize = 100; // per insert batch
 
         $faker = Factory::create();
 
@@ -51,16 +52,17 @@ class RecordController extends Controller
 
             for ($j = 0; $j < $batchSize && ($i + $j) < $count; $j++) {
                 $records[] = [
-                    'title' => $faker->title,
-                    'description' => $faker->description,
-                    'status' => $faker->randomElement(['Allowed', 'Prohibited']),
-                    'created_at' => now(),
-                    'updated_at' => now(),
+                    'title'       => $faker->sentence(3),
+                    'description' => $faker->paragraph,
+                    'status'      => $faker->randomElement(['Allowed', 'Prohibited']),
+                    'created_at'  => now(),
+                    'updated_at'  => now(),
                 ];
             }
 
-            \DB::table('records')->insert($records);
+            DB::table('records')->insert($records);
         }
+
         return redirect()->back()->with('success', 'Records generated successfully');
     }
 
