@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\AppSetting;
 use App\Models\Record;
+use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Http\Request;
 
 class RecordController extends Controller
@@ -43,7 +44,7 @@ class RecordController extends Controller
         $count = 1000;
         $batchSize = 100;
 
-        $faker = \Faker\Factory::create();
+        $faker = Factory::create();
 
         for ($i = 0; $i < $count; $i += $batchSize) {
             $records = [];
