@@ -40,8 +40,26 @@ class RecordController extends Controller
 
     public function generate()
     {
-        $statuses = ['Allowed', 'Prohibited'];
-        $records = Record::factory()->count(1000)->create();
+        $count = 1000;
+        $batchSize = 100;
+
+        $faker = \Faker\Factory::create();
+
+        for ($i = 0; $i < $count; $i += $batchSize) {
+            $records = [];
+
+            for ($j = 0; $j < $batchSize && ($i + $j) < $count; $j++) {
+                $records[] = [
+                    'title' => $faker->title,
+                    'description' => $faker->description,
+                    'status' => $faker->randomElement(['Allowed', 'Prohibited']),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+            }
+
+            \DB::table('records')->insert($records);
+        }
         return redirect()->back()->with('success', 'Records generated successfully');
     }
 
