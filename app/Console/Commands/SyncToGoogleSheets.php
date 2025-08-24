@@ -8,6 +8,7 @@ use Google\Service\Sheets;
 use Google\Service\Sheets\ValueRange;
 use Google\Service\Sheets\ClearValuesRequest;
 use App\Models\Record;
+use App\Models\AppSetting;
 use Illuminate\Support\Facades\Log;
 
 class SyncToGoogleSheets extends Command
@@ -20,6 +21,7 @@ class SyncToGoogleSheets extends Command
         Log::info('Google sync started at ' . now());
 
         try {
+            // --- Google Client setup ---
             $client = new Client();
             $client->setApplicationName('Laravel Google Sync');
             $client->setScopes([Sheets::SPREADSHEETS]);
@@ -28,10 +30,8 @@ class SyncToGoogleSheets extends Command
             // --- Load credentials ---
             $jsonEnv = env('GOOGLE_APPLICATION_CREDENTIALS_JSON');
             if ($jsonEnv) {
-                // Use JSON from env (Railway)
                 $client->setAuthConfig(json_decode($jsonEnv, true));
             } else {
-                // Fallback to local file (development)
                 $localPath = storage_path('app/google/credentials.json');
                 if (!file_exists($localPath)) {
                     Log::error('No Google credentials found!');
@@ -43,21 +43,33 @@ class SyncToGoogleSheets extends Command
 
             $service = new Sheets($client);
 
-            // --- Get Spreadsheet ID ---
-            $spreadsheetId = env('GOOGLE_SHEET_ID');
-            if (!$spreadsheetId) {
-                Log::error('GOOGLE_SHEET_ID not set!');
-                $this->error('GOOGLE_SHEET_ID not set!');
+            // --- Get Google Sheet URL from DB ---
+            $sheetUrl = AppSetting::where('key', 'sheet_url')->value('value');
+            if (!$sheetUrl) {
+                $this->error("Google Sheet URL not set in DB!");
+                Log::error("Google Sheet URL not set in DB!");
                 return;
             }
 
-            $sheetName = 'Лист1';
+            // --- Extract Sheet ID ---
+            preg_match('/\/d\/([a-zA-Z0-9-_]+)/', $sheetUrl, $matches);
+            if (!isset($matches[1])) {
+                $this->error("Invalid Google Sheet URL!");
+                Log::error("Invalid Google Sheet URL: $sheetUrl");
+                return;
+            }
 
-            // --- Read existing values from Google Sheet ---
-            $existingValues = $service->spreadsheets_values->get($spreadsheetId, $sheetName)->getValues() ?? [];
-            $rows = array_slice($existingValues, 1); // skip header
+            $spreadsheetId = $matches[1];
+            $sheetName = 'Лист1'; // adjust if your sheet name is different
 
-            // --- Update comments in DB for rows with valid IDs ---
+            // --- Read existing values ---
+            $existingValues = $service->spreadsheets_values
+                ->get($spreadsheetId, $sheetName)
+                ->getValues() ?? [];
+
+            $rows = array_slice($existingValues, 1); // skip header row
+
+            // --- Update comments in DB for existing rows ---
             foreach ($rows as $row) {
                 $recordId = $row[0] ?? null;
                 $comment  = $row[4] ?? '';
@@ -66,7 +78,7 @@ class SyncToGoogleSheets extends Command
                 }
             }
 
-            // --- Get Allowed records ---
+            // --- Get Allowed records from DB ---
             $records = Record::allowed()->get();
             if ($records->isEmpty()) {
                 Log::info('No Allowed records to sync.');
@@ -76,6 +88,7 @@ class SyncToGoogleSheets extends Command
             // --- Prepare values for Google Sheet ---
             $header = ['id', 'title', 'description', 'status', 'comment'];
             $newValues = [$header];
+
             foreach ($records as $record) {
                 $newValues[] = [
                     $record->id,
@@ -86,10 +99,11 @@ class SyncToGoogleSheets extends Command
                 ];
             }
 
-            // --- Clear sheet and batch insert ---
+            // --- Clear sheet before writing ---
             $service->spreadsheets_values->clear($spreadsheetId, $sheetName, new ClearValuesRequest());
 
-            $batchSize = 100;
+            // --- Insert in batches ---
+            $batchSize = 100; // insert 100 rows at a time
             for ($i = 1; $i < count($newValues); $i += $batchSize) {
                 $chunk = array_slice($newValues, $i, $batchSize);
                 $body = new ValueRange(['values' => array_merge([$header], $chunk)]);
@@ -99,6 +113,7 @@ class SyncToGoogleSheets extends Command
 
             Log::info('✅ Allowed records successfully synced with Google Sheets! Total rows: ' . (count($newValues) - 1));
             $this->info('✅ Google sync completed successfully!');
+
         } catch (\Throwable $e) {
             Log::error('Google sync failed: ' . $e->getMessage());
             $this->error('Google sync failed: ' . $e->getMessage());
