@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\AppSetting;
 use Illuminate\Console\Command;
 use Google\Client;
 use Google\Service\Sheets;
@@ -37,13 +38,8 @@ class FetchFromGoogleSheets extends Command
         $service = new Sheets($client);
 
         // --- Get Spreadsheet ID ---
-        $sheetUrlPath = storage_path('app/config/sheet_url.txt');
-        if (!file_exists($sheetUrlPath)) {
-            $this->error("Google Sheet URL not set!");
-            return;
-        }
+        $sheetUrl = AppSetting::where('key', 'sheet_url')->value('value');
 
-        $sheetUrl = file_get_contents($sheetUrlPath);
         preg_match('/\/d\/([a-zA-Z0-9-_]+)/', $sheetUrl, $matches);
         if (!isset($matches[1])) {
             $this->error("Invalid Google Sheet URL!");
