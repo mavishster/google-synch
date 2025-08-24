@@ -29,6 +29,8 @@ class SyncToGoogleSheets extends Command
 
             // --- Load credentials ---
             $jsonEnv = env('GOOGLE_APPLICATION_CREDENTIALS_JSON');
+            Log::info('Credentials: ' . substr(env('GOOGLE_APPLICATION_CREDENTIALS_JSON'), 0, 50));
+
             if ($jsonEnv) {
                 $client->setAuthConfig(json_decode($jsonEnv, true));
             } else {
