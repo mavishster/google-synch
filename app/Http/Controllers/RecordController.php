@@ -53,7 +53,7 @@ class RecordController extends Controller
             for ($j = 0; $j < $batchSize && ($i + $j) < $count; $j++) {
                 $records[] = [
                     'title'       => $faker->sentence(3),
-                    'description' => $faker->paragraph,
+                    'description' => $faker->sentence(10),
                     'status'      => $faker->randomElement(['Allowed', 'Prohibited']),
                     'created_at'  => now(),
                     'updated_at'  => now(),
