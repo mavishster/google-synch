@@ -8,7 +8,7 @@ use Google\Service\Sheets;
 use Google\Service\Sheets\ValueRange;
 use Google\Service\Sheets\ClearValuesRequest;
 use App\Models\Record;
-use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Support\Facades\Log;
 
 class SyncToGoogleSheets extends Command
 {
@@ -17,93 +17,91 @@ class SyncToGoogleSheets extends Command
 
     public function handle()
     {
-        \Log::info('Google sync started at ' . now());
+        Log::info('Google sync started at ' . now());
 
-        // --- Google Client setup ---
-        $client = new Client();
-        $client->setApplicationName('Laravel Google Sync');
-        $client->setScopes([Sheets::SPREADSHEETS]);
-        $client->setAuthConfig(storage_path('app/google/credentials.json'));
-        $client->setAccessType('offline');
+        try {
+            $client = new Client();
+            $client->setApplicationName('Laravel Google Sync');
+            $client->setScopes([Sheets::SPREADSHEETS]);
+            $client->setAccessType('offline');
 
-        $tokenPath = storage_path('app/google/token.json');
-        if (file_exists($tokenPath)) {
-            $client->setAccessToken(json_decode(file_get_contents($tokenPath), true));
-            if ($client->isAccessTokenExpired() && $client->getRefreshToken()) {
-                $client->fetchAccessTokenWithRefreshToken($client->getRefreshToken());
-                file_put_contents($tokenPath, json_encode($client->getAccessToken()));
+            // --- Load credentials ---
+            $jsonEnv = env('GOOGLE_APPLICATION_CREDENTIALS_JSON');
+            if ($jsonEnv) {
+                // Use JSON from env (Railway)
+                $client->setAuthConfig(json_decode($jsonEnv, true));
+            } else {
+                // Fallback to local file (development)
+                $localPath = storage_path('app/google/credentials.json');
+                if (!file_exists($localPath)) {
+                    Log::error('No Google credentials found!');
+                    $this->error('No Google credentials found!');
+                    return;
+                }
+                $client->setAuthConfig($localPath);
             }
-        }
 
-        $service = new Sheets($client);
+            $service = new Sheets($client);
 
-        // --- Get Spreadsheet ID ---
-        $sheetUrlPath = storage_path('app/config/sheet_url.txt');
-        if (!file_exists($sheetUrlPath)) {
-            $this->error("Google Sheet URL not set!");
-            return;
-        }
-
-        $sheetUrl = file_get_contents($sheetUrlPath);
-        preg_match('/\/d\/([a-zA-Z0-9-_]+)/', $sheetUrl, $matches);
-        if (!isset($matches[1])) {
-            $this->error("Invalid Google Sheet URL!");
-            return;
-        }
-
-        $spreadsheetId = $matches[1];
-        $sheetName = 'Лист1';
-
-        // --- Read existing values from Google Sheet ---
-        $existingValues = $service->spreadsheets_values->get($spreadsheetId, $sheetName)->getValues() ?? [];
-        $rows = array_slice($existingValues, 1); // skip header
-
-        // --- Update comments in DB for rows with valid IDs ---
-        foreach ($rows as $row) {
-            $recordId = $row[0] ?? null;
-            $comment  = $row[4] ?? ''; // last column = comment
-            if ($recordId && is_numeric($recordId)) {
-                Record::where('id', $recordId)->update(['comment' => $comment]);
+            // --- Get Spreadsheet ID ---
+            $spreadsheetId = env('GOOGLE_SHEET_ID');
+            if (!$spreadsheetId) {
+                Log::error('GOOGLE_SHEET_ID not set!');
+                $this->error('GOOGLE_SHEET_ID not set!');
+                return;
             }
+
+            $sheetName = 'Лист1';
+
+            // --- Read existing values from Google Sheet ---
+            $existingValues = $service->spreadsheets_values->get($spreadsheetId, $sheetName)->getValues() ?? [];
+            $rows = array_slice($existingValues, 1); // skip header
+
+            // --- Update comments in DB for rows with valid IDs ---
+            foreach ($rows as $row) {
+                $recordId = $row[0] ?? null;
+                $comment  = $row[4] ?? '';
+                if ($recordId && is_numeric($recordId)) {
+                    Record::where('id', $recordId)->update(['comment' => $comment]);
+                }
+            }
+
+            // --- Get Allowed records ---
+            $records = Record::allowed()->get();
+            if ($records->isEmpty()) {
+                Log::info('No Allowed records to sync.');
+                return;
+            }
+
+            // --- Prepare values for Google Sheet ---
+            $header = ['id', 'title', 'description', 'status', 'comment'];
+            $newValues = [$header];
+            foreach ($records as $record) {
+                $newValues[] = [
+                    $record->id,
+                    $record->title,
+                    $record->description,
+                    $record->status,
+                    $record->comment ?? '',
+                ];
+            }
+
+            // --- Clear sheet and batch insert ---
+            $service->spreadsheets_values->clear($spreadsheetId, $sheetName, new ClearValuesRequest());
+
+            $batchSize = 100;
+            for ($i = 1; $i < count($newValues); $i += $batchSize) {
+                $chunk = array_slice($newValues, $i, $batchSize);
+                $body = new ValueRange(['values' => array_merge([$header], $chunk)]);
+                $params = ['valueInputOption' => 'RAW'];
+                $service->spreadsheets_values->update($spreadsheetId, $sheetName, $body, $params);
+            }
+
+            Log::info('✅ Allowed records successfully synced with Google Sheets! Total rows: ' . (count($newValues) - 1));
+            $this->info('✅ Google sync completed successfully!');
+        } catch (\Throwable $e) {
+            Log::error('Google sync failed: ' . $e->getMessage());
+            $this->error('Google sync failed: ' . $e->getMessage());
         }
-
-        // --- Get only Allowed records from DB ---
-        $records = Record::allowed()->get();
-
-        // --- Prepare new values to send to Google Sheet ---
-        $header = ['id', 'title', 'description', 'status', 'comment'];
-        $newValues = [$header];
-
-        foreach ($records as $record) {
-            $newValues[] = [
-                $record->id,
-                $record->title,
-                $record->description,
-                $record->status,
-                $record->comment ?? '', // always last
-            ];
-        }
-
-        // --- Update Google Sheet ---
-        $body = new ValueRange(['values' => $newValues]);
-        $params = ['valueInputOption' => 'RAW'];
-        $service->spreadsheets_values->clear($spreadsheetId, $sheetName, new ClearValuesRequest());
-        $service->spreadsheets_values->update($spreadsheetId, $sheetName, $body, $params);
-
-        $this->info("✅ Allowed records successfully synced with Google Sheets!");
-
-        // --- Display progress ---
-        $progress = $this->output->createProgressBar(count($newValues) - 1);
-        $progress->start();
-
-        foreach (array_slice($newValues, 1) as $row) {
-            $id = $row[0] ?? '';
-            $comment = $row[4] ?? '';
-            $this->line("ID: $id | Comment: $comment");
-            $progress->advance();
-        }
-
-        $progress->finish();
-        $this->info("\nDone!");
     }
 }
