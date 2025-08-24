@@ -8,6 +8,7 @@ use Google\Service\Sheets;
 use Google\Service\Sheets\ValueRange;
 use Google\Service\Sheets\ClearValuesRequest;
 use App\Models\Record;
+use Illuminate\Console\Scheduling\Schedule;
 
 class SyncToGoogleSheets extends Command
 {
@@ -16,6 +17,8 @@ class SyncToGoogleSheets extends Command
 
     public function handle()
     {
+        \Log::info('Google sync started at ' . now());
+
         // --- Google Client setup ---
         $client = new Client();
         $client->setApplicationName('Laravel Google Sync');
